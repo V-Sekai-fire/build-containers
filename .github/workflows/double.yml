@@ -1,4 +1,4 @@
-# Stock Godot at double precision: the pinned stable commit, untouched, built in this fork's containers
+# Godot at double precision: a pinned commit of V-Sekai-fire/entities-godot-4.7 (4.7.2-stable plus our backports), untouched, built in this fork's containers
 # (SCONSFLAGS="precision=double") with the x86_64 lines of godot-build-scripts at a pinned commit. See AGENTS.md.
 name: double
 
@@ -15,6 +15,7 @@ permissions:
   contents: read
 
 env:
+  GODOT_REPO: V-Sekai-fire/entities-godot-4.7
   GODOT_TAG: 4.7.2-stable
   GODOT_SHA: ed1daf0bf001b61586d9930840f2f1394092c079
   SCRIPTS_SHA: 63625f75c0f869dea4a01811522e10fefcd0f322
@@ -39,7 +40,7 @@ jobs:
           path: containers
       - uses: actions/checkout@v4
         with:
-          repository: godotengine/godot
+          repository: ${{ env.GODOT_REPO }}
           ref: ${{ env.GODOT_SHA }}
           path: godot
       - uses: actions/checkout@v4
@@ -143,5 +144,5 @@ jobs:
           tag="${GODOT_TAG}-double"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "$tag exists"; exit 0; fi
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Godot $GODOT_TAG at double precision" \
-            --notes "godotengine/godot $GODOT_SHA ($GODOT_TAG), unchanged; godotengine/godot-build-scripts $SCRIPTS_SHA; containers $GITHUB_SHA with SCONSFLAGS=precision=double. x86_64 Linux and Windows editors and export templates." \
+            --notes "$GODOT_REPO $GODOT_SHA (based on $GODOT_TAG), unchanged; godotengine/godot-build-scripts $SCRIPTS_SHA; containers $GITHUB_SHA with SCONSFLAGS=precision=double. x86_64 Linux and Windows editors and export templates." \
             rel/*
