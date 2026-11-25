@@ -11,3 +11,6 @@ RUN dnf -y install --setopt=install_weak_deps=False \
     mv -f ${LLVM_MINGW_NAME} /root/llvm-mingw
 
 CMD /bin/bash
+
+# Every scons call in this image builds double precision (precision=double), with no change to Godot.
+ENV SCONSFLAGS="precision=double"

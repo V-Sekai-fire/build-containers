@@ -1,0 +1,147 @@
+# Stock Godot at double precision: the pinned stable commit, untouched, built in this fork's containers
+# (SCONSFLAGS="precision=double") with the x86_64 lines of godot-build-scripts at a pinned commit. See AGENTS.md.
+name: double
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: publish the binaries as a release of this fork
+        type: boolean
+        default: false
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GODOT_TAG: 4.7.2-stable
+  GODOT_SHA: ed1daf0bf001b61586d9930840f2f1394092c079
+  SCRIPTS_SHA: 63625f75c0f869dea4a01811522e10fefcd0f322
+  IMG: 4.7-f43
+  BUILD_NAME: vsekai_double
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux, windows]
+    steps:
+      - name: Room on the runner for the images
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          path: containers
+      - uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: ${{ env.GODOT_SHA }}
+          path: godot
+      - uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-build-scripts
+          ref: ${{ env.SCRIPTS_SHA }}
+          path: scripts
+      - name: The Godot tree is the pinned commit, unchanged
+        run: |
+          test "$(git -C godot rev-parse HEAD)" = "$GODOT_SHA"
+          test -z "$(git -C godot status --porcelain)"
+          test "$(git -C scripts rev-parse HEAD)" = "$SCRIPTS_SHA"
+      - name: The source tarball, made as godot-build-scripts makes it
+        run: |
+          (cd godot && sh misc/scripts/make_tarball.sh -v "$GODOT_TAG" -g "$GODOT_SHA")
+          mv godot-"$GODOT_TAG".tar.gz "$RUNNER_TEMP/godot.tar.gz"
+          test -z "$(git -C godot status --porcelain)"
+      - name: The dependencies, from the URLs of the pinned godot-build-scripts
+        run: |
+          set -euo pipefail
+          url() { grep -oE "https://[^ ]*$1[^ ]*" scripts/build.sh | head -1; }
+          base() { grep -oE "base_url=https://[^ ]*$1[^ ]*" scripts/build.sh | head -1 | cut -d= -f2; }
+          mkdir -p deps/accesskit deps/winrt deps/angle deps/mesa
+          (cd deps/accesskit && curl -fsSL -o a.zip "$(url accesskit-c)" && unzip -q a.zip && rm a.zip && mv accesskit-c-* accesskit-c)
+          if [ "${{ matrix.platform }}" = windows ]; then
+            (cd deps/winrt && curl -fsSL -o w.zip "$(url winrt-headers)" && unzip -q w.zip && rm w.zip)
+            (cd deps/angle && curl -fsSL -o a.zip "$(base godot-angle-static)-x86_64-gcc-13-release.zip" && unzip -q a.zip && rm a.zip)
+            (cd deps/mesa && curl -fsSL -o m.zip "$(base godot-nir-static)-x86_64-gcc-release.zip" && unzip -q m.zip && rm m.zip)
+          fi
+      - name: The images, this fork's Dockerfiles
+        working-directory: containers
+        run: |
+          podman build -t godot-fedora:$IMG -f Dockerfile.base .
+          podman build --build-arg img_version=$IMG -v "$PWD/files":/root/files:z \
+            -t godot-${{ matrix.platform }}:$IMG -f Dockerfile.${{ matrix.platform }} .
+          podman run --rm godot-${{ matrix.platform }}:$IMG bash -c 'test "$SCONSFLAGS" = "precision=double"'
+          podman image inspect godot-${{ matrix.platform }}:$IMG --format '{{.Id}}' | tee "$RUNNER_TEMP/image.id"
+      - name: The x86_64 lines of the pinned build script, run in the image
+        run: |
+          set -euo pipefail
+          s=scripts/build-${{ matrix.platform }}/build.sh
+          { sed -n '1,/^# Classical/p' "$s"; sed -n '/Starting classical build/,/cp -rvp bin\/\* \/root\/out\/x86_64\/templates/p' "$s"; } > "$RUNNER_TEMP/x86_64.sh"
+          grep -c 'arch=x86_64' "$RUNNER_TEMP/x86_64.sh"
+          if grep -qE 'arch=(x86_32|arm64|arm32)' "$RUNNER_TEMP/x86_64.sh"; then echo "the cut took another arch"; exit 1; fi
+          mkdir -p out
+          podman run --rm --env CLASSICAL=1 --env NUM_CORES=$(nproc) --env BUILD_NAME --env GODOT_VERSION_STATUS=stable \
+            -v "$RUNNER_TEMP/godot.tar.gz":/root/godot.tar.gz:ro -v "$RUNNER_TEMP/x86_64.sh":/root/x86_64.sh:ro \
+            -v "$PWD/deps/accesskit":/root/accesskit:ro -v "$PWD/deps/winrt":/root/winrt:ro \
+            -v "$PWD/deps/angle":/root/angle:ro -v "$PWD/deps/mesa":/root/mesa:ro -v "$PWD/out":/root/out \
+            godot-${{ matrix.platform }}:$IMG bash /root/x86_64.sh
+      - name: Still the pinned commit, unchanged, and the binaries are double
+        run: |
+          test "$(git -C godot rev-parse HEAD)" = "$GODOT_SHA"
+          test -z "$(git -C godot status --porcelain)"
+          ls -la out/x86_64/tools out/x86_64/templates
+          ls out/x86_64/tools out/x86_64/templates | grep -q '\.double\.'
+          if ls out/x86_64/tools out/x86_64/templates | grep -E '^godot\.' | grep -v '\.double\.'; then echo "a binary is not double"; exit 1; fi
+          if [ "${{ matrix.platform }}" = linux ]; then
+            e=$(ls out/x86_64/tools/godot.linuxbsd.editor.double.x86_64)
+            "$e" --headless --version | tee version.txt
+            grep -q "double" version.txt
+            grep -q "${GODOT_SHA:0:9}" version.txt
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: godot-double-${{ matrix.platform }}
+          path: |
+            out/x86_64
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: godot-double-*
+          path: built
+      - name: Official names with double, the templates as a .tpz, and SHA512-SUMS.txt
+        run: |
+          set -euo pipefail
+          v="${GODOT_TAG%-stable}.stable"
+          mkdir -p rel tpz/templates
+          cp built/godot-double-linux/tools/godot.linuxbsd.editor.double.x86_64 "rel/Godot_v${GODOT_TAG}_double_linux.x86_64"
+          cp built/godot-double-windows/tools/godot.windows.editor.double.x86_64.exe "rel/Godot_v${GODOT_TAG}_double_win64.exe"
+          cp built/godot-double-windows/tools/godot.windows.editor.double.x86_64.console.exe "rel/Godot_v${GODOT_TAG}_double_win64_console.exe"
+          cp built/godot-double-linux/templates/godot.linuxbsd.template_debug.double.x86_64 tpz/templates/linux_debug.x86_64
+          cp built/godot-double-linux/templates/godot.linuxbsd.template_release.double.x86_64 tpz/templates/linux_release.x86_64
+          cp built/godot-double-windows/templates/godot.windows.template_debug.double.x86_64.exe tpz/templates/windows_debug_x86_64.exe
+          cp built/godot-double-windows/templates/godot.windows.template_release.double.x86_64.exe tpz/templates/windows_release_x86_64.exe
+          echo "$v" > tpz/templates/version.txt
+          (cd tpz && zip -q -r "../rel/Godot_v${GODOT_TAG}_double_export_templates.tpz" templates)
+          (cd rel && sha512sum * > SHA512-SUMS.txt && cat SHA512-SUMS.txt)
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GODOT_TAG}-double"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "$tag exists"; exit 0; fi
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Godot $GODOT_TAG at double precision" \
+            --notes "godotengine/godot $GODOT_SHA ($GODOT_TAG), unchanged; godotengine/godot-build-scripts $SCRIPTS_SHA; containers $GITHUB_SHA with SCONSFLAGS=precision=double. x86_64 Linux and Windows editors and export templates." \
+            rel/*
