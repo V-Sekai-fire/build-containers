@@ -60,8 +60,8 @@ jobs:
       - name: The dependencies, from the URLs of the pinned godot-build-scripts
         run: |
           set -euo pipefail
-          url() { grep -oE "https://[^ ]*$1[^ ]*" scripts/build.sh | head -1; }
-          base() { grep -oE "base_url=https://[^ ]*$1[^ ]*" scripts/build.sh | head -1 | cut -d= -f2; }
+          url() { grep -oE "https://[^ ]*$1[^ ]*" "$GITHUB_WORKSPACE/scripts/build.sh" | head -1; }
+          base() { grep -oE "base_url=https://[^ ]*$1[^ ]*" "$GITHUB_WORKSPACE/scripts/build.sh" | head -1 | cut -d= -f2; }
           mkdir -p deps/accesskit deps/winrt deps/angle deps/mesa
           (cd deps/accesskit && curl -fsSL -o a.zip "$(url accesskit-c)" && unzip -q a.zip && rm a.zip && mv accesskit-c-* accesskit-c)
           if [ "${{ matrix.platform }}" = windows ]; then
