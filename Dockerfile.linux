@@ -34,3 +34,5 @@ RUN dnf install -y wayland-devel && \
     ./relocate-sdk.sh
 
 CMD /bin/bash
+# Every scons call in this image builds double precision (precision=double), with no change to Godot.
+ENV SCONSFLAGS="precision=double"
